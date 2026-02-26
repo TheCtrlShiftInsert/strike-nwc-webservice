@@ -1,0 +1,20 @@
+[Unit]
+Description=Strike Connect NWC Wallet Service
+After=network.target
+
+[Service]
+Type=simple
+User=mikelrbrts
+Group=mikelrbrts
+WorkingDirectory=/home/mikelrbrts/strike-connect
+ExecStart=/usr/bin/node /home/mikelrbrts/strike-connect/src/index.js
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=strike-connect
+
+Environment=NODE_ENV=production
+
+[Install]
+WantedBy=multi-user.target

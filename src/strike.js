@@ -114,4 +114,33 @@ const lookupInvoice = async (invoiceId) => {
   return state;
 };
 
-module.exports = { payInvoice, makeInvoice, lookupInvoice };
+const getBalance = async () => {
+  const { data } = await axios({
+    method: "get",
+    url: "https://api.strike.me/v1/balances",
+    headers: {
+      Accept: "application/json",
+      Authorization: `Bearer ${STRIKE_API_KEY}`,
+    },
+  });
+
+  return data;
+};
+
+const listInvoices = async ({ limit }) => {
+  const { data } = await axios({
+    method: "get",
+    url: "https://api.strike.me/v1/invoices",
+    headers: {
+      Accept: "application/json",
+      Authorization: `Bearer ${STRIKE_API_KEY}`,
+    },
+    params: {
+      $top: limit,
+    },
+  });
+
+  return data;
+};
+
+module.exports = { payInvoice, makeInvoice, lookupInvoice, getBalance, listInvoices };

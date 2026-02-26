@@ -33,6 +33,8 @@
     "dotenv": "16.4.5",
     "light-bolt11-decoder": "3.1.1",
     "nostr-tools": "2.5.2",
+    "polka": "^0.5.2",
+    "sirv": "^2.0.0",
     "ws": "8.17.0"
   }
 }

@@ -1,13 +1,34 @@
 # strike-nwc-service
 Nostr Wallet Connect service using Strike API.
 
-##  Supported NWC Commands
+## Supported NWC Commands
 
 `pay_invoice` - requires `partner.payment-quote.lightning.create` and `partner.payment-quote.execute` Strike API scopes.
 
-`make_invoice` -  requires `partner.invoice.create` and `partner.invoice.quote.generate` Strike API scopes.
+`make_invoice` - requires `partner.invoice.create` and `partner.invoice.quote.generate` Strike API scopes.
 
-`lookup_invoice` -  requires `partner.invoice.read` Strike API scope.
+`lookup_invoice` - requires `partner.invoice.read` Strike API scope.
+
+`get_balance` - optional, requires `partner.balance.read` Strike API scope. Enabled by setting `WALLET_BALANCE=ENABLED` in your .env file.
+
+`list_transactions` - optional, requires `partner.invoice.read` Strike API scope. Enabled by setting `TRANSACTION_HISTORY=ENABLED` in your .env file.
+
+## Web Panel
+
+The service includes an optional web panel for real-time monitoring and configuration. To enable it, set `WEB_PANEL=ENABLED` in your .env file.
+
+The web panel provides:
+- Real-time connection status and metrics
+- NWC connection string display with QR code
+- Live log streaming
+- Strike API ACL verification/testing
+
+Configuration options:
+- `WEB_PANEL` - Set to `ENABLED` to turn on the web panel (default: disabled)
+- `WEB_PANEL_PORT` - Port for the web panel (default: 3000)
+- `WEB_PANEL_HOST` - Host/IP to bind to (default: 127.0.0.1). Use comma-separated values for multiple interfaces (e.g., `127.0.0.1,100.x.x.x` for Tailscale access)
+
+Access the web panel at `http://localhost:3000` (or your configured host/port) after starting the service.
 
 ## Helper Scripts
 

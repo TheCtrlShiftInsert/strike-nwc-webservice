@@ -10,13 +10,33 @@ const {
   NWC_CONNECTION_SECRET,
   NWC_SERVICE_PUBKEY,
   AUTHORIZED_PUBKEY,
+  WALLET_BALANCE_ENABLED,
+  TRANSACTION_HISTORY_ENABLED,
+  WEB_PANEL_ENABLED,
 } = require("./constants");
-const { payInvoice, makeInvoice, lookupInvoice } = require("./strike");
+const {
+  payInvoice,
+  makeInvoice,
+  lookupInvoice,
+  getBalance,
+  listInvoices,
+} = require("./strike");
+const { initializeLogger, getLogBuffer } = require("./logger");
+const { startWebServer } = require("./web-server");
 
 useWebSocketImplementation(require("ws"));
 
 let totalAmountSentInSats = 0;
 const cachedInvoiceResults = {};
+const paymentHistory = [];
+let relay = null;
+let webServerStarted = false;
+
+// Export getters for web panel
+const getTotalAmountSent = () => totalAmountSentInSats;
+const getCachedInvoiceResults = () => cachedInvoiceResults;
+const getPaymentHistory = () => paymentHistory;
+const getRelay = () => relay;
 
 const UNAUTHORIZED = "UNAUTHORIZED";
 const NOT_IMPLEMENTED = "NOT_IMPLEMENTED";
@@ -25,33 +45,56 @@ const PAYMENT_FAILED = "PAYMENT_FAILED";
 const INTERNAL = "INTERNAL";
 const NOT_FOUND = "NOT_FOUND";
 
-const start = async () => {
-  const relay = await Relay.connect(RELAY_URI);
-  console.log(`connected to ${RELAY_URI}`);
+const connectRelay = async () => {
+  try {
+    relay = await Relay.connect(RELAY_URI);
+    console.log(`connected to ${RELAY_URI}`);
 
-  relay.onclose = () => {
-    console.log("Relay connection closed.");
-  };
+    // Start web server if enabled (only once)
+    if (WEB_PANEL_ENABLED && !webServerStarted) {
+      startWebServer({
+        getRelay,
+        getTotalAmountSent,
+        getCachedInvoiceResults,
+        getPaymentHistory,
+        getLogBuffer
+      });
+      webServerStarted = true;
+    }
 
-  relay.subscribe(
-    [
+    relay.onclose = () => {
+      console.log("Relay connection closed. Reconnecting in 5 seconds...");
+      setTimeout(connectRelay, 5000);
+    };
+
+    relay.subscribe(
+      [
+        {
+          authors: [NWC_CONNECTION_PUBKEY],
+          kinds: [NWCWalletRequest],
+        },
+      ],
       {
-        authors: [NWC_CONNECTION_PUBKEY],
-        kinds: [NWCWalletRequest],
+        onevent(event) {
+          console.log("NWC request:", event);
+          handleNwcRequest(relay, event);
+        },
       },
-    ],
-    {
-      onevent(event) {
-        console.log("NWC request:", event);
-        handleNwcRequest(relay, event);
+      {
+        onclose(reason) {
+          console.log("Relay subscription closed: ", reason);
+        },
       },
-    },
-    {
-      onclose(reason) {
-        console.log("Relay subscription closed: ", reason);
-      },
-    },
-  );
+    );
+  } catch (err) {
+    console.error(`Failed to connect to relay: ${err}. Retrying in 5 seconds...`);
+    setTimeout(connectRelay, 5000);
+  }
+};
+
+const start = async () => {
+  initializeLogger();
+  await connectRelay();
 };
 
 const decryptNwcRequestContent = async (eventContent) => {
@@ -135,12 +178,23 @@ const handlePayInvoiceRequest = async (nwcRequestContent) => {
   }
 
   try {
-    await payInvoice(invoice);
+    const paymentResult = await payInvoice(invoice);
     totalAmountSentInSats = totalAmountSentInSats + amountInSats;
     console.log(`successfully paid ${amountInSats} sats`);
     console.log(
       `total amount of sats sent since this wallet service has been running: ${totalAmountSentInSats}\n\n`,
     );
+
+    // Store payment details for history
+    paymentHistory.push({
+      type: 'outgoing',
+      invoice: invoice,
+      amount: amountInSats,
+      timestamp: Math.floor(Date.now() / 1000),
+      description: nwcRequestContent.params?.comment || 'Zap',
+      status: 'sent',
+      paymentId: paymentResult.paymentId || null
+    });
 
     return { preimage: "gfy" };
   } catch (err) {
@@ -198,6 +252,49 @@ const handleLookupInvoiceRequest = async (nwcRequestContent) => {
   }
 };
 
+const handleGetBalanceRequest = async () => {
+  try {
+    const balances = await getBalance();
+    const btcBalance = balances.find((b) => b.currency === "BTC");
+    const balanceInMillisats = btcBalance
+      ? Math.floor(parseFloat(btcBalance.total) * 100_000_000 * 1000)
+      : 0;
+
+    return { balance: balanceInMillisats };
+  } catch (err) {
+    console.error(`error getting balance: ${err}`);
+    throw new Error(INTERNAL);
+  }
+};
+
+const handleListTransactionsRequest = async (nwcRequestContent) => {
+  const { limit } = nwcRequestContent.params || {};
+
+  try {
+    const { items } = await listInvoices({ limit: limit || 50 });
+
+    const transactions = items.map((invoice) => ({
+      type: "incoming",
+      invoice: invoice.invoiceId,
+      description: invoice.description || "",
+      amount: Math.floor(
+        parseFloat(invoice.amount?.amount || 0) * 100_000_000 * 1000,
+      ),
+      created_at: Math.floor(new Date(invoice.created).getTime() / 1000),
+      expires_at: null,
+      metadata: {
+        state: invoice.state,
+        currency: invoice.amount?.currency,
+      },
+    }));
+
+    return { transactions };
+  } catch (err) {
+    console.error(`error listing transactions: ${err}`);
+    throw new Error(INTERNAL);
+  }
+};
+
 const handleNwcRequest = async (relay, event) => {
   let errorCode = null;
   let result = null;
@@ -213,6 +310,16 @@ const handleNwcRequest = async (relay, event) => {
       result = await handleMakeInvoiceRequest(nwcRequestContent);
     } else if (nwcRequestContent.method === "lookup_invoice") {
       result = await handleLookupInvoiceRequest(nwcRequestContent);
+    } else if (nwcRequestContent.method === "get_balance") {
+      if (!WALLET_BALANCE_ENABLED) {
+        throw new Error(NOT_IMPLEMENTED);
+      }
+      result = await handleGetBalanceRequest();
+    } else if (nwcRequestContent.method === "list_transactions") {
+      if (!TRANSACTION_HISTORY_ENABLED) {
+        throw new Error(NOT_IMPLEMENTED);
+      }
+      result = await handleListTransactionsRequest(nwcRequestContent);
     } else {
       errorCode = NOT_IMPLEMENTED;
     }
@@ -229,7 +336,11 @@ const handleNwcRequest = async (relay, event) => {
     });
     console.log("NWC response:", nwcResponse);
 
-    relay.publish(nwcResponse);
+    if (relay && relay.connected) {
+      relay.publish(nwcResponse);
+    } else {
+      console.error("Relay not connected, unable to publish response");
+    }
   } catch (err) {
     console.error("failed to publish NWC response", err);
   }
