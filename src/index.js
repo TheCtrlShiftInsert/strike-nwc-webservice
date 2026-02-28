@@ -13,6 +13,8 @@ const {
   WALLET_BALANCE_ENABLED,
   TRANSACTION_HISTORY_ENABLED,
   WEB_PANEL_ENABLED,
+  BALANCE_POLLING_INTERVAL,
+  parseInterval,
 } = require("./constants");
 const {
   payInvoice,
@@ -20,6 +22,7 @@ const {
   lookupInvoice,
   getBalance,
   listInvoices,
+  listPaidInvoicesLast24Hours,
 } = require("./strike");
 const { initializeLogger, getLogBuffer } = require("./logger");
 const { startWebServer } = require("./web-server");
@@ -29,14 +32,24 @@ useWebSocketImplementation(require("ws"));
 let totalAmountSentInSats = 0;
 const cachedInvoiceResults = {};
 const paymentHistory = [];
+const cachedTransactions = [];
 let relay = null;
 let webServerStarted = false;
+let balancePollingInterval = null;
+const cachedBalanceData = {
+  totalBalance: 0,
+  incoming24h: 0,
+  outgoing24h: 0,
+  lastUpdated: null
+};
 
 // Export getters for web panel
 const getTotalAmountSent = () => totalAmountSentInSats;
 const getCachedInvoiceResults = () => cachedInvoiceResults;
 const getPaymentHistory = () => paymentHistory;
+const getCachedTransactions = () => cachedTransactions;
 const getRelay = () => relay;
+const getCachedBalanceData = () => cachedBalanceData;
 
 const UNAUTHORIZED = "UNAUTHORIZED";
 const NOT_IMPLEMENTED = "NOT_IMPLEMENTED";
@@ -57,13 +70,19 @@ const connectRelay = async () => {
         getTotalAmountSent,
         getCachedInvoiceResults,
         getPaymentHistory,
-        getLogBuffer
+        getCachedTransactions,
+        getLogBuffer,
+        getCachedBalanceData
       });
       webServerStarted = true;
     }
 
     relay.onclose = () => {
       console.log("Relay connection closed. Reconnecting in 5 seconds...");
+      if (balancePollingInterval) {
+        clearInterval(balancePollingInterval);
+        balancePollingInterval = null;
+      }
       setTimeout(connectRelay, 5000);
     };
 
@@ -86,10 +105,108 @@ const connectRelay = async () => {
         },
       },
     );
+
+    // Start balance polling after relay connects
+    startBalancePolling();
   } catch (err) {
     console.error(`Failed to connect to relay: ${err}. Retrying in 5 seconds...`);
     setTimeout(connectRelay, 5000);
   }
+};
+
+const updateBalanceData = async () => {
+  try {
+    if (!WALLET_BALANCE_ENABLED && !TRANSACTION_HISTORY_ENABLED) {
+      console.log("Skipping update: both balance and transactions are disabled");
+      return;
+    }
+
+    console.log("Updating balance data...");
+
+    let balanceInMillisats = 0;
+    let incoming24h = 0;
+    let outgoing24h = 0;
+
+    if (WALLET_BALANCE_ENABLED) {
+      // Fetch current balance
+      const balances = await getBalance();
+      const btcBalance = balances.find((b) => b.currency === "BTC");
+      balanceInMillisats = btcBalance
+        ? Math.floor(parseFloat(btcBalance.total) * 100_000_000 * 1000)
+        : 0;
+
+      // Fetch incoming invoices from last 24h
+      const paidInvoices = await listPaidInvoicesLast24Hours();
+      if (paidInvoices.items && Array.isArray(paidInvoices.items)) {
+        paidInvoices.items.forEach((invoice) => {
+          const invoiceAmount = Math.floor(
+            parseFloat(invoice.amount?.amount || 0) * 100_000_000 * 1000,
+          );
+          incoming24h += invoiceAmount;
+        });
+      }
+
+      // Calculate outgoing from local payment history (last 24h)
+      const twentyFourHoursAgo = Math.floor(Date.now() / 1000) - (24 * 60 * 60);
+      paymentHistory.forEach((payment) => {
+        if (payment.timestamp >= twentyFourHoursAgo && payment.type === 'outgoing') {
+          outgoing24h += payment.amount;
+        }
+      });
+    }
+
+    if (TRANSACTION_HISTORY_ENABLED) {
+      // Fetch and cache all transactions from Strike API
+      const { items } = await listInvoices({ limit: 100 });
+      const transactions = items.map((invoice) => ({
+        type: "incoming",
+        invoice: invoice.invoiceId,
+        description: invoice.description || "",
+        amount: Math.floor(
+          parseFloat(invoice.amount?.amount || 0) * 100_000_000 * 1000,
+        ),
+        timestamp: Math.floor(new Date(invoice.created).getTime() / 1000),
+        state: invoice.state,
+        currency: invoice.amount?.currency
+      }));
+      cachedTransactions.length = 0;
+      cachedTransactions.push(...transactions);
+    }
+
+    // Update cached data
+    if (WALLET_BALANCE_ENABLED) {
+      cachedBalanceData.totalBalance = balanceInMillisats;
+      cachedBalanceData.incoming24h = incoming24h;
+      cachedBalanceData.outgoing24h = outgoing24h;
+    }
+    cachedBalanceData.lastUpdated = new Date().toISOString();
+
+    // Log appropriate message based on what was updated
+    if (WALLET_BALANCE_ENABLED && TRANSACTION_HISTORY_ENABLED) {
+      console.log(`Balance updated: ${balanceInMillisats} sats, in24h: ${incoming24h}, out24h: ${outgoing24h}, txs: ${cachedTransactions.length}`);
+    } else if (WALLET_BALANCE_ENABLED) {
+      console.log(`Balance updated: ${balanceInMillisats} sats, in24h: ${incoming24h}, out24h: ${outgoing24h} (transactions disabled)`);
+    } else {
+      console.log(`Transactions updated: ${cachedTransactions.length} txs (balance disabled)`);
+    }
+  } catch (err) {
+    console.error(`Error updating balance data: ${err}`);
+  }
+};
+
+const startBalancePolling = () => {
+  if (balancePollingInterval) {
+    clearInterval(balancePollingInterval);
+  }
+
+  // Initial update
+  updateBalanceData();
+
+  // Set up polling interval
+  const intervalMs = parseInterval(BALANCE_POLLING_INTERVAL);
+  console.log(`Starting balance polling every ${BALANCE_POLLING_INTERVAL} (${intervalMs}ms)`);
+
+  balancePollingInterval = setInterval(updateBalanceData, intervalMs);
 };
 
 const start = async () => {

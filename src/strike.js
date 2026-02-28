@@ -143,4 +143,24 @@ const listInvoices = async ({ limit }) => {
   return data;
 };
 
-module.exports = { payInvoice, makeInvoice, lookupInvoice, getBalance, listInvoices };
+const listPaidInvoicesLast24Hours = async () => {
+  const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+  const filter = `state eq 'PAID' and created ge ${twentyFourHoursAgo}`;
+
+  const { data } = await axios({
+    method: "get",
+    url: "https://api.strike.me/v1/invoices",
+    headers: {
+      Accept: "application/json",
+      Authorization: `Bearer ${STRIKE_API_KEY}`,
+    },
+    params: {
+      $filter: filter,
+      $top: 100,
+    },
+  });
+
+  return data;
+};
+
+module.exports = { payInvoice, makeInvoice, lookupInvoice, getBalance, listInvoices, listPaidInvoicesLast24Hours };

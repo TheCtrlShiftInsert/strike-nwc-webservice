@@ -15,8 +15,10 @@ const WALLET_BALANCE_ENABLED = process.env.WALLET_BALANCE === "ENABLED";
 const TRANSACTION_HISTORY_ENABLED =
   process.env.TRANSACTION_HISTORY === "ENABLED";
 const WEB_PANEL_ENABLED = process.env.WEB_PANEL === "ENABLED";
-const WEB_PANEL_PORT = process.env.WEB_PANEL_PORT || 3000;
+const WEB_PANEL_PORT = process.env.WEB_PANEL_PORT || 2021;
 const WEB_PANEL_HOST = process.env.WEB_PANEL_HOST || "127.0.0.1";
+const BALANCE_POLLING_INTERVAL = process.env.BALANCE_POLLING_INTERVAL || "4h";
+const BALANCE_DISPLAY_DEFAULT = process.env.BALANCE_DISPLAY_DEFAULT || "sats";
 
 if (!STRIKE_API_KEY) {
   console.log("Missing STRIKE_API_KEY in .env file.");
@@ -54,6 +56,24 @@ if (!NWC_CONNECTION_SECRET) {
   process.exit(1);
 }
 
+const parseInterval = (interval) => {
+  const match = interval.match(/^(\d+)([smhd])$/);
+  if (!match) {
+    throw new Error(`Invalid interval format: ${interval}. Use format like '30s', '5m', '2h', '1d'`);
+  }
+
+  const value = parseInt(match[1], 10);
+  const unit = match[2];
+  const multipliers = {
+    s: 1000,
+    m: 60 * 1000,
+    h: 60 * 60 * 1000,
+    d: 24 * 60 * 60 * 1000,
+  };
+
+  return value * multipliers[unit];
+};
+
 module.exports = {
   STRIKE_API_KEY,
   STRIKE_SOURCE_CURRENCY,
@@ -69,4 +89,7 @@ module.exports = {
   WEB_PANEL_ENABLED,
   WEB_PANEL_PORT,
   WEB_PANEL_HOST,
+  BALANCE_POLLING_INTERVAL,
+  BALANCE_DISPLAY_DEFAULT,
+  parseInterval,
 };

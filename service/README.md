@@ -1,58 +1,63 @@
-# Strike Connect Systemd Service
+# Strike Connect User Systemd Service
 
-## Installation
+## Initial Setup (One-time)
 
-1. Copy the service file to systemd:
+This step must be done manually before the web UI can manage the service.
+
+1. Copy the service file to user systemd:
    ```bash
-   sudo cp strike-connect.service /etc/systemd/system/
+   mkdir -p ~/.config/systemd/user
+   cp service/strike-connect.service ~/.config/systemd/user/
    ```
 
-2. Edit the service file and replace placeholders:
+2. Reload systemd to recognize the new service:
    ```bash
-   sudo nano /etc/systemd/system/strike-connect.service
-   ```
-   - Replace `<YOUR_USERNAME>` with your username (e.g., `username`)
-   - Replace `<YOUR_GROUP>` with your group (usually same as username)
-   - Verify `WorkingDirectory` and `ExecStart` paths are correct
-
-3. Reload systemd to recognize the new service:
-   ```bash
-   sudo systemctl daemon-reload
+   systemctl --user daemon-reload
    ```
 
-4. Enable the service to start on boot:
+3. Enable the service to start on login:
    ```bash
-   sudo systemctl enable strike-connect
+   systemctl --user enable strike-connect
    ```
 
-5. Start the service:
+4. Start the service:
    ```bash
-   sudo systemctl start strike-connect
+   systemctl --user start strike-connect
    ```
 
-## Management Commands
+5. Access the web panel at http://localhost:2021
+
+## Web UI Management
+
+After initial setup, you can manage the service from the web panel at http://localhost:2021:
+
+- **Install**: Install or reinstall the user service
+- **Uninstall**: Remove the user service (stops it and disables auto-start)
+- **Restart**: Restart the service (web page will disconnect and reload after 21 seconds)
+
+## Management Commands (Manual)
 
 Check status:
 ```bash
-sudo systemctl status strike-connect
+systemctl --user status strike-connect
 ```
 
 View logs:
 ```bash
-sudo journalctl -u strike-connect -f
+journalctl --user -u strike-connect -f
 ```
 
 Stop service:
 ```bash
-sudo systemctl stop strike-connect
+systemctl --user stop strike-connect
 ```
 
 Restart service:
 ```bash
-sudo systemctl restart strike-connect
+systemctl --user restart strike-connect
 ```
 
 Disable autostart:
 ```bash
-sudo systemctl disable strike-connect
+systemctl --user disable strike-connect
 ```

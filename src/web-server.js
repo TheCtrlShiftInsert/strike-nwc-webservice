@@ -2,6 +2,8 @@ const polka = require('polka');
 const sirv = require('sirv');
 const { WebSocketServer } = require('ws');
 const path = require('path');
+const { execSync } = require('child_process');
+const fs = require('fs');
 const { testAllACLs } = require('./acl-tester');
 const {
   RELAY_URI,
@@ -20,18 +22,22 @@ let getRelayFn = null;
 let getTotalAmountSentFn = null;
 let getCachedInvoiceResultsFn = null;
 let getPaymentHistoryFn = null;
+let getCachedTransactionsFn = null;
 let processStartTime = Date.now();
 let getLogBufferFn = null;
+let getCachedBalanceDataFn = null;
 
 /**
  * Set shared state references
  */
-const setSharedState = ({ getRelay, getTotalAmountSent, getCachedInvoiceResults, getPaymentHistory, getLogBuffer }) => {
+const setSharedState = ({ getRelay, getTotalAmountSent, getCachedInvoiceResults, getPaymentHistory, getCachedTransactions, getLogBuffer, getCachedBalanceData }) => {
   getRelayFn = getRelay;
   getTotalAmountSentFn = getTotalAmountSent;
   getCachedInvoiceResultsFn = getCachedInvoiceResults;
   getPaymentHistoryFn = getPaymentHistory;
+  getCachedTransactionsFn = getCachedTransactions;
   getLogBufferFn = getLogBuffer;
+  getCachedBalanceDataFn = getCachedBalanceData;
 };
 
 /**
@@ -71,8 +77,8 @@ const getRelayStatus = () => {
 /**
  * Start the web server
  */
-const startWebServer = ({ getRelay, getTotalAmountSent, getCachedInvoiceResults, getPaymentHistory, getLogBuffer }) => {
-  setSharedState({ getRelay, getTotalAmountSent, getCachedInvoiceResults, getPaymentHistory, getLogBuffer });
+const startWebServer = ({ getRelay, getTotalAmountSent, getCachedInvoiceResults, getPaymentHistory, getCachedTransactions, getLogBuffer, getCachedBalanceData }) => {
+  setSharedState({ getRelay, getTotalAmountSent, getCachedInvoiceResults, getPaymentHistory, getCachedTransactions, getLogBuffer, getCachedBalanceData });
 
   const hosts = WEB_PANEL_HOST.split(',').map(h => h.trim());
   const servers = [];
@@ -110,6 +116,106 @@ const startWebServer = ({ getRelay, getTotalAmountSent, getCachedInvoiceResults,
       }));
     });
 
+    // API: Get service status
+    app.get('/api/service-status', (req, res) => {
+      try {
+        const servicePath = path.join(process.env.HOME, '.config', 'systemd', 'user', 'strike-connect.service');
+        const serviceExists = fs.existsSync(servicePath);
+        
+        if (!serviceExists) {
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify({ installed: false, running: false }));
+          return;
+        }
+        
+        try {
+          const status = execSync('systemctl --user is-active strike-connect', { encoding: 'utf-8' });
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify({ installed: true, running: status.trim() === 'active' }));
+        } catch (err) {
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify({ installed: true, running: false }));
+        }
+      } catch (err) {
+        res.statusCode = 500;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ error: err.message }));
+      }
+    });
+
+    // API: Install service
+    app.post('/api/service-install', (req, res) => {
+      try {
+        const projectDir = process.cwd();
+        const serviceSourcePath = path.join(projectDir, 'service', 'strike-connect.service');
+        const userServiceDir = path.join(process.env.HOME, '.config', 'systemd', 'user');
+        const serviceDestPath = path.join(userServiceDir, 'strike-connect.service');
+        
+        if (!fs.existsSync(userServiceDir)) {
+          fs.mkdirSync(userServiceDir, { recursive: true });
+        }
+        
+        fs.copyFileSync(serviceSourcePath, serviceDestPath);
+        
+        execSync('systemctl --user daemon-reload');
+        
+        execSync('systemctl --user enable strike-connect');
+        
+        execSync('systemctl --user start strike-connect');
+        
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ success: true, message: 'Service installed and started' }));
+      } catch (err) {
+        console.error('Service install error:', err);
+        res.statusCode = 500;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ error: err.message }));
+      }
+    });
+
+    // API: Uninstall service
+    app.post('/api/service-uninstall', (req, res) => {
+      try {
+        try {
+          execSync('systemctl --user stop strike-connect');
+        } catch (err) {}
+        
+        try {
+          execSync('systemctl --user disable strike-connect');
+        } catch (err) {}
+        
+        const servicePath = path.join(process.env.HOME, '.config', 'systemd', 'user', 'strike-connect.service');
+        if (fs.existsSync(servicePath)) {
+          fs.unlinkSync(servicePath);
+        }
+        
+        execSync('systemctl --user daemon-reload');
+        
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ success: true, message: 'Service uninstalled' }));
+      } catch (err) {
+        console.error('Service uninstall error:', err);
+        res.statusCode = 500;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ error: err.message }));
+      }
+    });
+
+    // API: Restart service
+    app.post('/api/service-restart', (req, res) => {
+      try {
+        execSync('systemctl --user restart strike-connect');
+        
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ success: true, message: 'Service restarted' }));
+      } catch (err) {
+        console.error('Service restart error:', err);
+        res.statusCode = 500;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ error: err.message }));
+      }
+    });
+
     // API: Get config (non-sensitive)
     app.get('/api/config', (req, res) => {
       res.setHeader('Content-Type', 'application/json');
@@ -121,23 +227,45 @@ const startWebServer = ({ getRelay, getTotalAmountSent, getCachedInvoiceResults,
       }));
     });
 
+    // API: Get balance data
+    app.get('/api/balance', (req, res) => {
+      if (!WALLET_BALANCE_ENABLED) {
+        res.statusCode = 403;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ error: 'Wallet balance feature is disabled' }));
+        return;
+      }
+
+      const balanceData = getCachedBalanceDataFn ? getCachedBalanceDataFn() : {
+        totalBalance: 0,
+        incoming24h: 0,
+        outgoing24h: 0,
+        lastUpdated: null
+      };
+      const totalSent = getTotalAmountSentFn ? getTotalAmountSentFn() : 0;
+
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({
+        ...balanceData,
+        quotaUsed: totalSent,
+        quotaMax: TOTAL_MAX_SEND_AMOUNT_IN_SATS
+      }));
+    });
+
     // API: Get transaction history
     app.get('/api/transactions', (req, res) => {
-      const cachedResults = getCachedInvoiceResultsFn ? getCachedInvoiceResultsFn() : {};
+      if (!TRANSACTION_HISTORY_ENABLED) {
+        res.statusCode = 403;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ error: 'Transaction history feature is disabled' }));
+        return;
+      }
+
+      const cachedTransactions = getCachedTransactionsFn ? getCachedTransactionsFn() : [];
       const outgoingPayments = getPaymentHistoryFn ? getPaymentHistoryFn() : [];
 
-      // Convert cached invoices to array
-      const incomingInvoices = Object.values(cachedResults).map(inv => ({
-        type: 'incoming',
-        invoice: inv.invoice,
-        description: inv.description,
-        amount: inv.amount,
-        timestamp: inv.created_at,
-        state: inv.metadata?.state || 'unknown'
-      }));
-
       // Combine and sort by timestamp (newest first)
-      const allTransactions = [...incomingInvoices, ...outgoingPayments]
+      const allTransactions = [...cachedTransactions, ...outgoingPayments]
         .sort((a, b) => b.timestamp - a.timestamp)
         .slice(0, 100); // Limit to 100 most recent
 

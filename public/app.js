@@ -5,6 +5,7 @@ let statusUpdateInterval = null;
 let transactionUpdateInterval = null;
 let currentFilter = 'all';
 let allTransactions = [];
+let balanceDisplayUnit = 'sats';
 
 // DOM elements
 const elements = {
@@ -14,7 +15,6 @@ const elements = {
   relayStatus: document.getElementById('relayStatus'),
   uptime: document.getElementById('uptime'),
   totalSent: document.getElementById('totalSent'),
-  quotaUsed: document.getElementById('quotaUsed'),
   invoiceCount: document.getElementById('invoiceCount'),
   balanceFeature: document.getElementById('balanceFeature'),
   txHistoryFeature: document.getElementById('txHistoryFeature'),
@@ -23,7 +23,80 @@ const elements = {
   logsContainer: document.getElementById('logsContainer'),
   clearLogsButton: document.getElementById('clearLogsButton'),
   autoScroll: document.getElementById('autoScroll'),
-  transactionsContainer: document.getElementById('transactionsContainer')
+  transactionsContainer: document.getElementById('transactionsContainer'),
+  totalBalance: document.getElementById('totalBalance'),
+  incoming24h: document.getElementById('incoming24h'),
+  outgoing24h: document.getElementById('outgoing24h'),
+  balanceLastUpdated: document.getElementById('balanceLastUpdated'),
+  balanceDisplayToggles: document.querySelectorAll('input[name="balanceDisplay"]'),
+  balanceCard: document.getElementById('balanceCard'),
+  transactionCard: document.getElementById('transactionCard'),
+  serviceStatusIndicator: document.getElementById('serviceStatusIndicator'),
+  serviceStatusText: document.getElementById('serviceStatusText'),
+  serviceInstallBtn: document.getElementById('serviceInstallBtn'),
+  serviceUninstallBtn: document.getElementById('serviceUninstallBtn'),
+  serviceRestartBtn: document.getElementById('serviceRestartBtn'),
+  restartWarning: document.getElementById('restartWarning'),
+  restartCountdown: document.getElementById('restartCountdown'),
+  installModal: document.getElementById('installModal'),
+  closeModal: document.getElementById('closeModal'),
+  installCommand: document.getElementById('installCommand'),
+  copyCommandBtn: document.getElementById('copyCommandBtn')
+};
+
+// Feature flag states
+let balanceEnabled = false;
+let transactionHistoryEnabled = false;
+
+/**
+ * Convert millisats to BTC
+ */
+const satsToBtc = (millisats) => {
+  return millisats / 1000 / 100_000_000;
+};
+
+/**
+ * Format balance with appropriate decimals
+ */
+const formatBalance = (millisats, unit) => {
+  if (unit === 'sats') {
+    return `${Math.floor(millisats / 1000).toLocaleString()} sats`;
+  } else {
+    const btc = satsToBtc(millisats);
+    return `${btc.toFixed(8)} BTC`;
+  }
+};
+
+/**
+ * Fetch balance data
+ */
+const fetchBalance = async () => {
+  if (!balanceEnabled) {
+    return;
+  }
+
+  try {
+    const response = await fetch('/api/balance');
+    const balanceData = await response.json();
+    renderBalance(balanceData);
+  } catch (err) {
+    console.error('Error fetching balance:', err);
+  }
+};
+
+/**
+ * Render balance to DOM
+ */
+const renderBalance = (balanceData) => {
+  elements.totalBalance.textContent = formatBalance(balanceData.totalBalance, balanceDisplayUnit);
+  elements.incoming24h.textContent = formatBalance(balanceData.incoming24h, balanceDisplayUnit);
+  elements.outgoing24h.textContent = `${balanceData.quotaUsed.toLocaleString()} / ${balanceData.quotaMax.toLocaleString()} sats`;
+
+  if (balanceData.lastUpdated) {
+    elements.balanceLastUpdated.textContent = `Last updated: ${formatTimestamp(balanceData.lastUpdated)}`;
+  } else {
+    elements.balanceLastUpdated.textContent = 'Last updated: --';
+  }
 };
 
 /**
@@ -74,18 +147,20 @@ const fetchStatus = async () => {
     updateConnectionStatus(status.relay.connected);
 
     // Update relay status
-    elements.relayStatus.textContent = status.relay.connected ? 'Connected' : 'Disconnected';
-    elements.relayStatus.style.color = status.relay.connected ? 'var(--success)' : 'var(--error)';
+   // elements.relayStatus.textContent = status.relay.connected ? 'Connected' : 'Disconnected';
+    //elements.relayStatus.style.color = status.relay.connected ? 'var(--success)' : 'var(--error)';
 
     // Update uptime
     elements.uptime.textContent = formatUptime(status.uptime);
 
     // Update payment stats
-    elements.totalSent.textContent = `${status.payments.totalSent.toLocaleString()} sats`;
-    elements.quotaUsed.textContent = `${status.payments.quotaUsed.toLocaleString()} / ${status.payments.quotaMax.toLocaleString()} sats`;
+    // elements.totalSent.textContent = `${status.payments.totalSent.toLocaleString()} sats`;
+    //elements.invoiceCount.textContent = status.connectionCount;
 
-    // Update invoice count
-    elements.invoiceCount.textContent = status.connectionCount;
+    // Also fetch balance if enabled
+    if (balanceEnabled) {
+      await fetchBalance();
+    }
   } catch (err) {
     console.error('Error fetching status:', err);
   }
@@ -99,14 +174,25 @@ const fetchConfig = async () => {
     const response = await fetch('/api/config');
     const config = await response.json();
 
-    // Update features status
-    const balanceStatus = elements.balanceFeature.querySelector('.feature-status');
-    balanceStatus.textContent = config.features.balanceEnabled ? 'Enabled' : 'Disabled';
-    balanceStatus.className = `feature-status ${config.features.balanceEnabled ? 'enabled' : 'disabled'}`;
+    balanceEnabled = config.features.balanceEnabled;
+    transactionHistoryEnabled = config.features.transactionHistoryEnabled;
 
-    const txHistoryStatus = elements.txHistoryFeature.querySelector('.feature-status');
-    txHistoryStatus.textContent = config.features.transactionHistoryEnabled ? 'Enabled' : 'Disabled';
-    txHistoryStatus.className = `feature-status ${config.features.transactionHistoryEnabled ? 'enabled' : 'disabled'}`;
+    // Show/hide cards based on feature flags
+    if (elements.balanceCard) {
+      elements.balanceCard.style.display = balanceEnabled ? 'block' : 'none';
+    }
+    if (elements.transactionCard) {
+      elements.transactionCard.style.display = transactionHistoryEnabled ? 'block' : 'none';
+    }
+
+    // Update features status
+    //////const balanceStatus = elements.balanceFeature.querySelector('.feature-status');
+    //balanceStatus.textContent = balanceEnabled ? 'Enabled' : 'Disabled';
+    //balanceStatus.className = `feature-status ${balanceEnabled ? 'enabled' : 'disabled'}`;
+
+    //const txHistoryStatus = elements.txHistoryFeature.querySelector('.feature-status');
+    //txHistoryStatus.textContent = transactionHistoryEnabled ? 'Enabled' : 'Disabled';
+    //txHistoryStatus.className = `feature-status ${transactionHistoryEnabled ? 'enabled' : 'disabled'}`;
   } catch (err) {
     console.error('Error fetching config:', err);
   }
@@ -238,6 +324,145 @@ const clearLogs = () => {
 };
 
 /**
+ * Fetch service status
+ */
+const fetchServiceStatus = async () => {
+  try {
+    const response = await fetch('/api/service-status');
+    const status = await response.json();
+    updateServiceStatusUI(status);
+  } catch (err) {
+    console.error('Error fetching service status:', err);
+    updateServiceStatusUI({ installed: false, running: false });
+  }
+};
+
+/**
+ * Update service status UI
+ */
+const updateServiceStatusUI = (status) => {
+  elements.serviceStatusIndicator.className = `status-indicator ${status.installed ? (status.running ? 'running' : 'stopped') : 'not-installed'}`;
+  
+  if (!status.installed) {
+    elements.serviceStatusText.textContent = 'Not Installed';
+    elements.serviceInstallBtn.disabled = false;
+    elements.serviceUninstallBtn.disabled = true;
+    elements.serviceRestartBtn.disabled = true;
+  } else if (status.running) {
+    elements.serviceStatusText.textContent = 'Running';
+    elements.serviceInstallBtn.disabled = true;
+    elements.serviceUninstallBtn.disabled = false;
+    elements.serviceRestartBtn.disabled = false;
+  } else {
+    elements.serviceStatusText.textContent = 'Stopped';
+    elements.serviceInstallBtn.disabled = false;
+    elements.serviceUninstallBtn.disabled = false;
+    elements.serviceRestartBtn.disabled = false;
+  }
+};
+
+/**
+ * Install service - show manual install modal
+ */
+const installService = () => {
+  elements.installModal.style.display = 'flex';
+};
+
+/**
+ * Close manual install modal
+ */
+const closeModal = () => {
+  elements.installModal.style.display = 'none';
+};
+
+/**
+ * Copy command to clipboard
+ */
+const copyCommandToClipboard = async () => {
+  try {
+    await navigator.clipboard.writeText(elements.installCommand.textContent);
+    const originalText = elements.copyCommandBtn.innerHTML;
+    elements.copyCommandBtn.innerHTML = `
+      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2">
+        <polyline points="20 6 9 17 4 12"/>
+      </svg>
+    `;
+    elements.copyCommandBtn.classList.add('copied');
+    setTimeout(() => {
+      elements.copyCommandBtn.innerHTML = originalText;
+      elements.copyCommandBtn.classList.remove('copied');
+    }, 2000);
+  } catch (err) {
+    console.error('Failed to copy to clipboard:', err);
+    alert('Failed to copy to clipboard. Please select and copy the command manually.');
+  }
+};
+
+/**
+ * Uninstall service
+ */
+const uninstallService = async () => {
+  if (!confirm('Are you sure you want to uninstall the service? This will stop it and disable auto-start.')) {
+    return;
+  }
+  
+  elements.serviceUninstallBtn.disabled = true;
+  elements.serviceUninstallBtn.textContent = 'Uninstalling...';
+  
+  try {
+    const response = await fetch('/api/service-uninstall', { method: 'POST' });
+    const result = await response.json();
+    
+    if (result.success) {
+      alert('Service uninstalled successfully!');
+      fetchServiceStatus();
+    } else {
+      alert(`Error: ${result.error}`);
+    }
+  } catch (err) {
+    alert(`Error uninstalling service: ${err.message}`);
+  }
+  
+  elements.serviceUninstallBtn.disabled = false;
+  elements.serviceUninstallBtn.textContent = 'Uninstall Service';
+};
+
+/**
+ * Restart service
+ */
+const restartService = async () => {
+  elements.restartWarning.style.display = 'block';
+  let countdown = 21;
+  
+  const countdownInterval = setInterval(() => {
+    countdown--;
+    elements.restartCountdown.textContent = countdown;
+    if (countdown <= 0) {
+      clearInterval(countdownInterval);
+    }
+  }, 1000);
+  
+  try {
+    const response = await fetch('/api/service-restart', { method: 'POST' });
+    const result = await response.json();
+    
+    if (result.success) {
+      setTimeout(() => {
+        location.reload();
+      }, 21000);
+    } else {
+      alert(`Error: ${result.error}`);
+      elements.restartWarning.style.display = 'none';
+      clearInterval(countdownInterval);
+    }
+  } catch (err) {
+    alert(`Error restarting service: ${err.message}`);
+    elements.restartWarning.style.display = 'none';
+    clearInterval(countdownInterval);
+  }
+};
+
+/**
  * Escape HTML to prevent XSS
  */
 const escapeHtml = (str) => {
@@ -250,13 +475,19 @@ const escapeHtml = (str) => {
  * Fetch transactions from API
  */
 const fetchTransactions = async () => {
+  if (!transactionHistoryEnabled) {
+    return;
+  }
+
   try {
     const response = await fetch('/api/transactions');
     allTransactions = await response.json();
     renderTransactions();
   } catch (err) {
     console.error('Error fetching transactions:', err);
-    elements.transactionsContainer.innerHTML = '<p class="error">Error loading transactions</p>';
+    if (elements.transactionsContainer) {
+      elements.transactionsContainer.innerHTML = '<p class="error">Error loading transactions</p>';
+    }
   }
 };
 
@@ -302,22 +533,30 @@ const renderTransactions = () => {
 };
 
 /**
- * Initialize the app
+ * Initialize app
  */
-const init = () => {
+const init = async () => {
   console.log('Initializing web panel...');
 
   // Fetch initial data
   console.log('Fetching initial data...');
   fetchStatus();
-  fetchConfig();
-  fetchTransactions();
+  await fetchConfig();
+  fetchServiceStatus();
+  if (transactionHistoryEnabled) {
+    fetchTransactions();
+  }
+  if (balanceEnabled) {
+    fetchBalance();
+  }
 
   // Set up status update interval
   statusUpdateInterval = setInterval(fetchStatus, 5000);
 
   // Set up transaction update interval (every 30 seconds)
-  transactionUpdateInterval = setInterval(fetchTransactions, 30000);
+  if (transactionHistoryEnabled) {
+    transactionUpdateInterval = setInterval(fetchTransactions, 30000);
+  }
 
   // Connect to WebSocket for logs
   connectWebSocket();
@@ -325,6 +564,36 @@ const init = () => {
   // Event listeners
   elements.testAclButton.addEventListener('click', testACLs);
   elements.clearLogsButton.addEventListener('click', clearLogs);
+  elements.serviceInstallBtn.addEventListener('click', installService);
+  elements.serviceUninstallBtn.addEventListener('click', uninstallService);
+  elements.serviceRestartBtn.addEventListener('click', restartService);
+  elements.closeModal.addEventListener('click', closeModal);
+  elements.copyCommandBtn.addEventListener('click', copyCommandToClipboard);
+
+  // Close modal when clicking outside
+  elements.installModal.addEventListener('click', (e) => {
+    if (e.target === elements.installModal) {
+      closeModal();
+    }
+  });
+
+  // Close modal with Escape key
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && elements.installModal.style.display === 'flex') {
+      closeModal();
+    }
+  });
+
+  // Balance display toggle listeners
+  elements.balanceDisplayToggles.forEach(toggle => {
+    toggle.addEventListener('change', (e) => {
+      if (e.target.checked) {
+        balanceDisplayUnit = e.target.value;
+        // Re-render balance with new unit
+        fetchBalance();
+      }
+    });
+  });
 
   // Filter buttons for transactions
   document.querySelectorAll('.filter-btn').forEach(btn => {
