@@ -11,6 +11,14 @@ Features:
 - User systemd service for auto-restart on reboots
 - Tailscale support for secure remote access
 
+### Screenshots
+
+**Desktop View:**
+![Web Panel Desktop](screenshots/Screenshot_20260227_215842.png)
+
+**Mobile View:**
+![Web Panel Mobile](screenshots/Screenshot_20260227_220322.jpg)
+
 ## Supported NWC Commands
 
 `pay_invoice` - Send Lightning payments. Requires `partner.payment-quote.lightning.create` and `partner.payment-quote.execute` Strike API scopes.
